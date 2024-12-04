@@ -1,6 +1,8 @@
 # Roblox-IP-lock-bypass
 Bypasses a Region ip lock (cookie) (opensource)
 
+UPDATED requirements.bat will install python fully so its automated if u dont have python installed
+
 Recommended to use Private Proxies| 
  
 - Loads proxy list from a text file
